@@ -46,6 +46,8 @@ function readConfig() {
 const CONFIG = readConfig();
 const CHROME_DIR = CONFIG.CHROME_DIR || path.join(ROOT, 'chrome');
 const PROFILE_DIR = CONFIG.CHROME_PROFILE_DIR || path.join(ROOT, 'chrome-profile');
+// 无头模式（默认）：不弹可见窗口运行技能；`--headed` 或 config.env CHROME_HEADLESS=0 时显示窗口（用于登录/调试）
+const HEADLESS = process.argv.includes('--headed') ? false : (CONFIG.CHROME_HEADLESS === '0' ? false : true);
 
 function findChromeExe() {
   if (!fs.existsSync(CHROME_DIR)) return null;
@@ -86,15 +88,17 @@ async function main() {
     process.exit(1);
   }
   fs.mkdirSync(PROFILE_DIR, { recursive: true });
-  console.log(`chrome: 启动（${exe}，独立配置 ${PROFILE_DIR}，端口 ${PORT}）…`);
-  spawn(exe, [
+  console.log(`chrome: 启动（${exe}，独立配置 ${PROFILE_DIR}，端口 ${PORT}${HEADLESS ? '，无头模式' : '，可见窗口'}）…`);
+  const args = [
     `--remote-debugging-port=${PORT}`,
     `--user-data-dir=${PROFILE_DIR}`,
     '--no-first-run',
     '--no-default-browser-check',
     '--no-sandbox',      // 本机实测必需：Chromium 沙箱初始化失败会导致数秒后自行退出
     '--disable-gpu',     // 同上；截图/视频功能走软件渲染，不受影响
-  ], { detached: true, stdio: 'ignore', windowsHide: false }).unref();
+  ];
+  if (HEADLESS) args.push('--headless=new'); // 无头模式：不弹窗口，完整支持 CDP/登录态
+  spawn(exe, args, { detached: true, stdio: 'ignore', windowsHide: false }).unref();
   for (let i = 1; i <= 20; i++) {
     await sleep(1000);
     if (await checkPort(PORT)) {

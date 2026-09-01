@@ -37,8 +37,9 @@ node scripts/setup-chrome.mjs --auto     # DSH 全程自动下载
 # 前置检查（工作区 Chrome 已运行时会直接连接）
 node scripts/check-deps.mjs
 
-# 启动工作区 Chrome（Chrome for Testing，独立配置；未运行时需要）
+# 启动工作区 Chrome（Chrome for Testing，独立配置；默认无头模式不弹窗口；未运行时需要）
 node scripts/launch-chrome.mjs
+#   --headed 显示可见窗口（登录站点/调试用）；config.env 可设 CHROME_HEADLESS=0
 
 # 示例：B 站动态第一条视频
 node scripts/bilibili-dynamics.mjs

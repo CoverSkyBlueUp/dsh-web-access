@@ -124,7 +124,7 @@ skill 自带常用一键脚本（`scripts/` 下，Node 22+ 直接运行）：
 | 脚本 | 用途 |
 |------|------|
 | `setup-chrome.mjs` | 准备工作区 Chrome for Testing（下载到本 skill 的 `chrome/` 专用文件夹）。**部署时先询问用户下载方式**：`--manual`（DSH 获取最新下载地址并打印，用户手动下载后把 zip 放入 `chrome/` 再重跑）或 `--auto`（DSH 全程自动下载，约 150MB）；交互终端无参数时会弹出选择菜单。若 `chrome/` 已有 `chrome.exe` 或 `chrome-win64.zip` 则直接复用/解压。 |
-| `launch-chrome.mjs` | 用 `--remote-debugging-port=9222 --user-data-dir=<skill>/chrome-profile` 启动工作区 Chrome（独立配置，**不弹授权框**、与系统浏览器隔离）。Chrome 缺失时自动先跑 setup-chrome.mjs；check-deps 找不到浏览器时自动调用它。 |
+| `launch-chrome.mjs` | 用 `--remote-debugging-port=9222 --user-data-dir=<skill>/chrome-profile` 启动工作区 Chrome（独立配置，**不弹授权框**、与系统浏览器隔离）。**默认无头模式（`--headless=new`，不弹可见窗口）**；`--headed` 或 `config.env CHROME_HEADLESS=0` 显示窗口（登录站点/调试用）。Chrome 缺失时自动先跑 setup-chrome.mjs；check-deps 找不到浏览器时自动调用它。 |
 | `bilibili-dynamics.mjs` | 打开 B 站「动态」取第一条视频动态：`node "${CLAUDE_SKILL_DIR}/scripts/bilibili-dynamics.mjs"`。自动开后台 tab → 打开 t.bilibili.com → 等动态加载 → 找第一条视频动态（标题/作者/链接/时长/时间）→ 关 tab，全程走 CDP Proxy。 |
 | `bilibili-recommendations.mjs` | 一键获取 B 站主页推荐视频：`node "${CLAUDE_SKILL_DIR}/scripts/bilibili-recommendations.mjs" [--limit N]`。开后台 tab → 打开 www.bilibili.com → 等推荐卡片 → 遍历 `.bili-video-card` 提取（标题/作者/日期/链接）→ 关 tab。 |
 
@@ -134,7 +134,7 @@ skill 自带常用一键脚本（`scripts/` 下，Node 22+ 直接运行）：
 
 **浏览器启动模式**：本 skill 用 `--remote-debugging-port=9222`（flag 模式）启动**工作区独立配置的 Chrome for Testing**（`chrome/` 二进制 + `chrome-profile/` 登录态，位置可由 `config.env` 的 `CHROME_DIR`/`CHROME_PROFILE_DIR` 覆盖）——不弹授权框、与系统浏览器隔离、运行产物全在工作区内（适配 DSH workspace-write）。为此 `config.env` 的 `WEB_ACCESS_BROWSER` 留空（走端口兜底探测 9222）。
 
-> ⚠️ **启动 Chrome 需要一次 full access 授权**：DSH workspace-write 沙箱会拦截 Chrome 进程（即使带 `--no-sandbox`），需以 full access 运行 `launch-chrome.mjs` 或等效命令启动 Chrome。**启动后 Chrome 常驻，skill 后续操作仅走 localhost、无需再授权**（"一次授权"）。另需 `--no-sandbox --disable-gpu`（本机实测：缺省时 Chromium 沙箱/GPU 初始化失败，Chrome 数秒后自行退出）。首次使用需在 Chrome 窗口内登录需要的站点（如 B 站），登录态保存在工作区内。
+> ⚠️ **启动 Chrome 需要一次 full access 授权**：DSH workspace-write 沙箱会拦截 Chrome 进程（即使带 `--no-sandbox`），需以 full access 运行 `launch-chrome.mjs` 或等效命令启动 Chrome。**启动后 Chrome 常驻（默认无头、无可见窗口），skill 后续操作仅走 localhost、无需再授权**（"一次授权"）。另需 `--no-sandbox --disable-gpu`（本机实测：缺省时 Chromium 沙箱/GPU 初始化失败，Chrome 数秒后自行退出）。首次使用需登录站点（如 B 站）：用 `--headed` 或桌面快捷方式「Chrome (DSH 工作区)」以可见窗口登录一次，之后无头模式复用登录态。
 
 ### 实战经验复盘
 
