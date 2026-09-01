@@ -1,12 +1,10 @@
 #!/usr/bin/env node
-// setup-chrome.mjs — 准备工作区 Chrome for Testing（web-access skill 内置）
+// setup-chrome.mjs — 部署：准备工作区 Chrome for Testing + 选择浏览器运行模式（web-access skill 内置）
 //
-// 部署时两种方式（由用户/Agent 选择）：
-//   1) --manual  「DSH 获取最新下载地址 → 你手动下载」：脚本联网获取最新 Chrome for Testing
-//                 的 win64 下载地址并打印；你自行下载（如用浏览器），把 zip 存为
-//                 <skill>/chrome/chrome-win64.zip，然后重新运行本脚本完成解压。
-//   2) --auto     「全程交给 DSH 下载」：脚本自动下载（约 150MB）并解压。
-// 无参数时：交互式终端会弹出选择菜单；非交互环境（Agent 调用）请显式传 --auto / --manual。
+// 部署时两个选择（由用户/Agent 决定）：
+//   下载方式：--manual（DSH 提供最新地址，用户手动下载）/ --auto（DSH 全程自动下载）
+//   运行模式：--headless（无头，不弹窗口，默认推荐）/ --headed（可见窗口，登录/调试用）
+// 无参数交互终端会依次弹出选择菜单；非交互环境（Agent 调用）请显式传参。
 //
 // 其它：若 <skill>/chrome/ 下已存在 chrome.exe（或 chrome-win64.zip），直接复用/解压，不联网。
 
@@ -95,9 +93,42 @@ function ask(question) {
   return new Promise((resolve) => rl.question(question, (a) => { rl.close(); resolve(a.trim()); }));
 }
 
+// 更新/新增 config.env 的单个键（保留其它行）
+function setConfig(key, value) {
+  let content = '';
+  try { content = fs.readFileSync(CONFIG_PATH, 'utf8'); } catch {}
+  const re = new RegExp(`^${key}=`);
+  let found = false;
+  const out = content.split(/\r?\n/).map((l) => {
+    if (re.test(l.trim())) { found = true; return `${key}=${value}`; }
+    return l;
+  });
+  if (!found) out.push(`${key}=${value}`);
+  fs.writeFileSync(CONFIG_PATH, out.join('\n') + '\n', 'utf8');
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const mode = args.includes('--manual') ? 'manual' : args.includes('--auto') ? 'auto' : null;
+
+  // --- 部署时选择浏览器运行模式（无头 vs 可见窗口） ---
+  let headless = args.includes('--headless') ? true : args.includes('--headed') ? false : null;
+  if (headless === null) {
+    if (process.stdin.isTTY) {
+      const m = await ask(
+        '浏览器运行模式：\n  1) 无头（不弹窗口，技能静默运行，推荐）\n  2) 可见窗口（登录站点/调试用）\n请输入 1 或 2（默认 1）：'
+      );
+      headless = m !== '2';
+    } else {
+      console.error(
+        '请指定浏览器运行模式：--headless（无头，不弹窗口）或 --headed（可见窗口）\n' +
+        '  完整用法：node scripts/setup-chrome.mjs [--manual|--auto] [--headless|--headed]'
+      );
+      process.exit(2);
+    }
+  }
+  setConfig('CHROME_HEADLESS', headless ? '1' : '0');
+  console.log(`chrome: 运行模式已设置 → ${headless ? '无头（不弹窗口）' : '可见窗口'}`);
 
   // 已安装 → 直接结束
   if (findChromeExe()) {
@@ -120,9 +151,10 @@ async function main() {
       chosen = a === '1' ? 'manual' : 'auto';
     } else {
       console.error(
-        'chrome: 未找到 Chrome for Testing。请先向用户询问下载方式后，显式指定：\n' +
-        '  node scripts/setup-chrome.mjs --manual   （DSH 获取最新地址，用户手动下载）\n' +
-        '  node scripts/setup-chrome.mjs --auto     （DSH 全程自动下载）'
+        'chrome: 未找到 Chrome for Testing。请先向用户询问后，显式指定下载方式与运行模式：\n' +
+        '  node scripts/setup-chrome.mjs --manual --headless   （DSH 提供地址，用户手动下载；无头模式）\n' +
+        '  node scripts/setup-chrome.mjs --auto --headed       （DSH 全程自动下载；可见窗口）\n' +
+        '  运行模式：--headless 无头（不弹窗口）/ --headed 可见窗口（登录用）'
       );
       process.exit(2);
     }

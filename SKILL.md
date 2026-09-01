@@ -123,7 +123,7 @@ skill 自带常用一键脚本（`scripts/` 下，Node 22+ 直接运行）：
 
 | 脚本 | 用途 |
 |------|------|
-| `setup-chrome.mjs` | 准备工作区 Chrome for Testing（下载到本 skill 的 `chrome/` 专用文件夹）。**部署时先询问用户下载方式**：`--manual`（DSH 获取最新下载地址并打印，用户手动下载后把 zip 放入 `chrome/` 再重跑）或 `--auto`（DSH 全程自动下载，约 150MB）；交互终端无参数时会弹出选择菜单。若 `chrome/` 已有 `chrome.exe` 或 `chrome-win64.zip` 则直接复用/解压。 |
+| `setup-chrome.mjs` | 部署：准备工作区 Chrome for Testing + **选择运行模式**。下载方式：`--manual`（DSH 提供最新地址，用户手动下载）/ `--auto`（DSH 全程自动下载）；运行模式：`--headless`（无头不弹窗，推荐）/ `--headed`（可见窗口，登录用），写入 `config.env CHROME_HEADLESS`。交互终端无参数时依次弹出选择菜单；若 `chrome/` 已有 `chrome.exe` 或 `chrome-win64.zip` 则直接复用/解压。 |
 | `launch-chrome.mjs` | 用 `--remote-debugging-port=9222 --user-data-dir=<skill>/chrome-profile` 启动工作区 Chrome（独立配置，**不弹授权框**、与系统浏览器隔离）。**默认无头模式（`--headless=new`，不弹可见窗口）**；`--headed` 或 `config.env CHROME_HEADLESS=0` 显示窗口（登录站点/调试用）。Chrome 缺失时自动先跑 setup-chrome.mjs；check-deps 找不到浏览器时自动调用它。 |
 | `bilibili-dynamics.mjs` | 打开 B 站「动态」取第一条视频动态：`node "${CLAUDE_SKILL_DIR}/scripts/bilibili-dynamics.mjs"`。自动开后台 tab → 打开 t.bilibili.com → 等动态加载 → 找第一条视频动态（标题/作者/链接/时长/时间）→ 关 tab，全程走 CDP Proxy。 |
 | `bilibili-recommendations.mjs` | 一键获取 B 站主页推荐视频：`node "${CLAUDE_SKILL_DIR}/scripts/bilibili-recommendations.mjs" [--limit N]`。开后台 tab → 打开 www.bilibili.com → 等推荐卡片 → 遍历 `.bili-video-card` 提取（标题/作者/日期/链接）→ 关 tab。 |
@@ -217,14 +217,15 @@ curl -s "http://localhost:3456/close?target=ID"
 
 ### 登录判断
 
-用户日常浏览器天然携带登录态，大多数常用网站已登录。
+工作区 Chrome 天然携带登录态（独立配置 `chrome-profile/`，登录一次长期有效）。
 
 登录判断的核心问题只有一个：**目标内容拿到了吗？**
 
-打开页面后先尝试获取目标内容。只有当确认**目标内容无法获取**且判断登录能解决时，才告知用户：
-> "当前页面在未登录状态下无法获取[具体内容]，请在你的浏览器中登录 [网站名]，完成后告诉我继续。"
-
-登录完成后无需重启任何东西，直接刷新页面继续。
+打开页面后先尝试获取目标内容。只有当确认**目标内容无法获取**且判断登录能解决时：
+1. **自动打开可见窗口**（技能默认无头模式看不到窗口，需切换）：运行 `node scripts/login.mjs <目标URL>`
+   ——自动把 Chrome 切换为可见窗口（无头会自动重启）并打开目标页，提示用户登录。
+2. 告知用户：> "请在弹出的 Chrome 窗口中登录 [网站名]，完成后告诉我继续。"
+3. 登录完成后无需重启任何东西，直接刷新页面继续；若想恢复无头模式，运行 `node scripts/launch-chrome.mjs --force`。
 
 ### 任务结束
 
@@ -310,5 +311,6 @@ updated: 2026-03-19
 | `references/site-patterns/bilibili.com.md` | 目标为 bilibili.com 时读取（主页推荐/动态选择器、提取表达式、编码与括号陷阱） |
 | `scripts/bilibili-dynamics.mjs` | 用户要看 B 站动态第一条视频时，直接运行该脚本 |
 | `scripts/bilibili-recommendations.mjs` | 用户要看 B 站主页推荐视频时，直接运行该脚本 |
-| `scripts/launch-chrome.mjs` | 需要用浏览器打开页面（flag 模式、工作区独立配置、不弹授权框）时使用；check-deps 自动调用 |
-| `scripts/setup-chrome.mjs` | Chrome 缺失时下载 Chrome for Testing 到工作区（launch-chrome 自动调用） |
+| `scripts/launch-chrome.mjs` | 启动/切换工作区 Chrome（flag 模式、独立配置；`--headed` 切可见窗口、`--force` 重启到目标模式）时使用；check-deps 自动调用 |
+| `scripts/setup-chrome.mjs` | 部署：Chrome 缺失时下载 Chrome for Testing 并选择运行模式（无头/可见），写入 config.env |
+| `scripts/login.mjs` | 需要登录站点时自动切可见窗口并打开目标页（`node scripts/login.mjs <url>`） |
