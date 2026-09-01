@@ -1,24 +1,28 @@
 ---
 domain: bilibili.com
 aliases: [哔哩哔哩, B站, b站]
-updated: 2026-08-31
+updated: 2026-09-01
 ---
 
 ## 平台特征
-- 登录后动态首页 `https://t.bilibili.com/` 为单页应用（SPA），动态列表逐条渲染在 `.bili-dyn-list__item` 卡片中，内容异步加载。
-- 视频动态卡片（「投稿了视频」/含视频）内含一个指向视频的链接 `a[href*="/video/"]`（形如 `https://www.bilibili.com/video/BV...`），可用它判断「是否为视频动态」。
-- 视频卡片标题元素：`.bili-dyn-card-video__title`（新结构），老结构 `.bili-video-card__info--tit`；视频时长在 `.duration-time`（如 `01:56`）。
-- 作者名在 `.bili-dyn-item__author-name`（或 `.bili-dyn-item__author`）；时间在 `.bili-dyn-item__time`（如「7分钟前 · 投稿了视频」）。
-- 需登录态：动态流为本人账号关注列表，CDP 直连用户日常浏览器即可拿到。
-- 通用 CDP 连接/eval 问题（调试模式、continue/break、编码、代理重启）见 [`../cdp-browser-modes.md`](../cdp-browser-modes.md)。
+- 主页 `https://www.bilibili.com/` 与动态 `https://t.bilibili.com/` 均为 SPA；推荐/动态内容异步渲染，需等待目标卡片出现。
+- 主页推荐卡片：`.bili-video-card`（每卡一条推荐），含 2 个视频链接（封面缩略图 + 标题链接），链接 `a[href*="/video/BV"]`。
+- 卡片标题=标题链接文本（不含换行）；统计条文本（如「642.0万 6132 11:09」）含换行且更长，勿直接取最长文本。
+- 作者 `.bili-video-card__info--author`；日期 `.bili-video-card__info--date`（如「· 08-27」）。
+- 动态卡片：`.bili-dyn-list__item`；视频动态标题 `.bili-dyn-card-video__title`（老结构 `.bili-video-card__info--tit`）；时长 `.duration-time`；作者名可取其 `innerText` 首行兜底。
+- 需登录态（动态流为本人关注列表）；主页推荐未登录也能拿到（个性化弱）。
+- 通用 CDP 连接/eval 问题（调试模式、continue/break、括号陷阱、编码、代理重启）见 [`../cdp-browser-modes.md`](../cdp-browser-modes.md)。
 
 ## 有效模式
-- 取动态第一条视频：`/new` 打开 `https://t.bilibili.com/` → 轮询 `.bili-dyn-list__item` 数量>0 → 遍历卡片取第一个含 `a[href*="/video/"]` 的卡片 → 提取 `.bili-dyn-card-video__title` 标题、作者、时长、时间 → `/close` 关 tab。
-- 作者名可用卡片 `innerText` 的第一个非空行兜底（作者名通常排在卡片文本首行）。
-- 脚本内 JS 表达式含中文时用 Unicode 转义（如 `\u7c89\u4e1d`），避免请求体编码损坏导致 `Runtime.evaluate` 报 "Uncaught"；纯 ASCII 选择器无需处理。
+- **主页推荐**（首选直接跑脚本 `node scripts/bilibili-recommendations.mjs [--limit N]`，免手写 eval）：
+  `/new https://www.bilibili.com` → 轮询 `.bili-video-card` 数量>0 → 遍历卡片：取 `a[href*="/video/BV"]` 首个链接的 href（去 query、统一 https、去重），标题=卡片内**不含换行**的最长链接文本 → `/close`。
+- **动态第一条视频**（脚本 `node scripts/bilibili-dynamics.mjs`）：`/new https://t.bilibili.com` → 轮询 `.bili-dyn-list__item`>0 → 第一个含 `a[href*="/video/"]` 的卡片 → 标题/作者/时长/时间 → `/close`。
+- 脚本内 JS 表达式含中文时用 Unicode 转义（如 `\u7c89\u4e1d`），避免请求体编码损坏报 "Uncaught"；纯 ASCII 无需处理。
+- 复杂表达式先写成本地 `.mjs` 文件用 `node --check` 校验语法，再发送（能发现括号/语法错误，省调试轮次）。
 
 ## 已知陷阱
-- **CDP `Runtime.evaluate` 表达式中不能用 `continue`/`break`**——会报 "Uncaught"（Edge CDP 怪癖）。要用 `if(命中){...return...}` 的写法，而不是 `if(不命中)continue;`。
-- 动态流是 SPA，卡片类名随版本变化；优先用 `body.innerText` + 关键词或 `a[href*="/video/"]` 定位，而非硬编码单一类名。
-- 页面刚加载时卡片可能尚未渲染，需等待 `.bili-dyn-list__item` 出现后再取；若长期无卡片，多为未登录或风控拦截。
-- 动态流实时刷新，同一脚本两次运行取到的「第一条视频」可能不同，属正常。
+- **CDP `Runtime.evaluate` 表达式禁 `continue`/`break`**——报 "Uncaught"；用 `if(命中){...return...}` 写法。
+- **多余右括号**：`return` 前的 `}` 多一个会让 IIFE 提前闭合、`return` 掉到函数外 → "Uncaught"（本次实测根因）。计数：`push` 后按嵌套层数闭合，再用 `node --check` 复核。
+- SPA 持续重渲染会令旧 DOM 引用失效：优先**直接遍历已知卡片容器**（`.bili-video-card`/`.bili-dyn-list__item`），勿依赖 `closest()` 推测结构；eval 报错可重试（3 次、间隔 1.5s）。
+- 页面刚加载卡片未渲染：先轮询目标选择器数量>0 再提取；长期为 0 多为未登录或风控。
+- 推荐/动态流实时刷新，两次运行结果不同属正常。
