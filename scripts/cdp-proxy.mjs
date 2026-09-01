@@ -5,6 +5,7 @@
 
 import http from 'node:http';
 import { URL, fileURLToPath } from 'node:url';
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -13,6 +14,46 @@ import { selectBrowser, findFallbackPort } from './browser-discovery.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PATTERNS_DIR = path.join(ROOT, 'references', 'site-patterns');
+
+// --- 使用追踪 / 保护机制 ---
+// lastActivity/lastAgent：记录最近一次请求（含 X-Agent 头，用于多 Agent 协作时识别使用方）
+// 空闲自动关：无请求超过 CHROME_IDLE_MS（默认 5 分钟）且为【无头模式】时自动关闭 Chrome；
+// 可见窗口（用户可能正在使用）不自动关。关闭前若检测到其它 Agent 最近在用它，则拒绝并提示。
+let lastActivity = Date.now();
+let lastAgent = null;
+const CHROME_IDLE_MS = parseInt(process.env.CDP_CHROME_IDLE_MS || '300000', 10);
+
+function readConfig() {
+  const cfg = {};
+  let content;
+  try { content = fs.readFileSync(path.join(ROOT, 'config.env'), 'utf8'); } catch { return cfg; }
+  for (const line of content.split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t || t.startsWith('#')) continue;
+    const i = t.indexOf('=');
+    if (i === -1) continue;
+    const k = t.slice(0, i).trim();
+    const v = t.slice(i + 1).trim();
+    if (k && v) cfg[k] = v;
+  }
+  return cfg;
+}
+const PROFILE_DIR = readConfig().CHROME_PROFILE_DIR || path.join(ROOT, 'chrome-profile');
+const MODE_MARKER = path.join(PROFILE_DIR, '.chrome-mode');
+function readModeMarker() { try { return fs.readFileSync(MODE_MARKER, 'utf8').trim(); } catch { return null; } }
+
+function killChrome() {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => { if (!done) { done = true; resolve(); } };
+    try {
+      const c = spawn('taskkill', ['/F', '/IM', 'chrome.exe', '/T'], { stdio: 'ignore', windowsHide: true });
+      c.on('exit', finish);
+      c.on('error', finish);
+    } catch { return finish(); }
+    setTimeout(finish, 8000);
+  });
+}
 
 // --- 解析命令行 --browser 参数（本次启动用哪个浏览器）---
 function parseBrowserArg() {
@@ -393,6 +434,14 @@ const server = http.createServer(async (req, res) => {
   const q = Object.fromEntries(parsed.searchParams);
   if (q.target) touchTab(q.target);
 
+  // 使用追踪：记录最近请求时间与请求方（X-Agent 头，用于多 Agent 协作与保护）
+  // /health 是状态查询，不计入使用（否则 close-chrome 的探测会污染 lastAgent）
+  if (pathname !== '/health') {
+    lastActivity = Date.now();
+    const agentHdr = req.headers['x-agent'];
+    if (agentHdr) lastAgent = String(agentHdr);
+  }
+
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
 
   try {
@@ -406,6 +455,10 @@ const server = http.createServer(async (req, res) => {
         sessions: sessions.size,
         managedTabs: managedTabs.size,
         chromePort,
+        lastActivity,
+        lastAgent,
+        idleCloseMs: CHROME_IDLE_MS,
+        mode: readModeMarker(),
       }));
       return;
     }
@@ -731,9 +784,25 @@ async function main() {
   const cleanupTimer = setInterval(cleanupIdleTabs, CLEANUP_INTERVAL);
   cleanupTimer.unref();
 
+  // 空闲自动关闭 Chrome（仅无头模式；可见窗口视为用户在用，不自动关）
+  // 检测间隔：取 IDLE_MS 的一半（下限 5s、上限 30s），便于测试短空闲
+  const idleCheckMs = Math.min(30000, Math.max(5000, Math.round(CHROME_IDLE_MS / 2)));
+  const idleTimer = setInterval(async () => {
+    try {
+      if (Date.now() - lastActivity < CHROME_IDLE_MS) return;
+      if (!(ws && (ws.readyState === WS.OPEN || ws.readyState === 1))) return; // 未连接浏览器
+      if (readModeMarker() !== 'headless') return; // 保护可见窗口（用户可能正在使用）
+      console.log(`[CDP Proxy] Chrome 空闲超过 ${Math.round(CHROME_IDLE_MS / 1000)}s（无头模式），自动关闭`);
+      lastActivity = Date.now(); // 防止重复触发
+      await killChrome();
+    } catch { /* 忽略 */ }
+  }, idleCheckMs);
+  idleTimer.unref();
+
   const shutdown = async (sig) => {
     console.log(`[CDP Proxy] ${sig}, cleaning up...`);
     clearInterval(cleanupTimer);
+    clearInterval(idleTimer);
     await closeAllManagedTabs();
     process.exit(0);
   };

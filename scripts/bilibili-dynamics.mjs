@@ -19,10 +19,13 @@ const PROXY_SCRIPT = path.join(ROOT, 'scripts', 'cdp-proxy.mjs');
 const PROXY_PORT = Number(process.env.CDP_PROXY_PORT || 3456);
 const BASE = `http://127.0.0.1:${PROXY_PORT}`;
 const FEED_URL = 'https://t.bilibili.com/';
+// 使用方标识：多 Agent 并发时由代理记录，供 close-chrome 判断"是否被其他 Agent 使用"
+const AGENT_ID = process.env.DSH_AGENT_ID || 'local';
 
 async function httpJson(method, pathname, body, timeoutMs = 60000) {
   const res = await fetch(`${BASE}${pathname}`, {
     method,
+    headers: { 'X-Agent': AGENT_ID },
     body: body !== undefined ? body : undefined,
     signal: AbortSignal.timeout(timeoutMs),
   });

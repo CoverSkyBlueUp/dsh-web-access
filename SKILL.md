@@ -229,9 +229,15 @@ curl -s "http://localhost:3456/close?target=ID"
 
 ### 任务结束
 
-用 `/close` 关闭自己创建的 tab，必须保留用户原有的 tab 不受影响。
+1. 用 `/close` 关闭自己创建的 tab，必须保留用户原有的 tab 不受影响。
+2. **用完自动关闭 Chrome**：运行 `node scripts/close-chrome.mjs`。代理另有兜底——**无请求超过 5 分钟且为无头模式时自动关闭 Chrome**（`CDP_CHROME_IDLE_MS` 可调）。
+3. **保护机制**：
+   - 若 close-chrome 提示「**被其他 Agent 使用**」→ 说明其它 Agent 正在用 Chrome，**先告知用户**，确认无并发后再 `--force`；
+   - 若提示「**可见窗口可能在使用中**」→ 用户可能正在浏览，告知用户确认后 `--force`；
+   - 可见窗口不会被空闲自动关闭（视为用户在用）。
+4. Proxy 持续运行，不建议主动停止。
 
-Proxy 持续运行，不建议主动停止——重启后需要在浏览器中重新授权 CDP 连接。
+> 多 Agent 并发：各 Agent 运行脚本时通过 `X-Agent` 头（`DSH_AGENT_ID` 环境变量）标识自己，代理记录最近使用方；其它 Agent 调用 close-chrome 时会检测到并拒绝，避免误关正在使用的浏览器。
 
 ## 并行调研：子 Agent 分治策略
 
@@ -314,3 +320,4 @@ updated: 2026-03-19
 | `scripts/launch-chrome.mjs` | 启动/切换工作区 Chrome（flag 模式、独立配置；`--headed` 切可见窗口、`--force` 重启到目标模式）时使用；check-deps 自动调用 |
 | `scripts/setup-chrome.mjs` | 部署：Chrome 缺失时下载 Chrome for Testing 并选择运行模式（无头/可见），写入 config.env |
 | `scripts/login.mjs` | 需要登录站点时自动切可见窗口并打开目标页（`node scripts/login.mjs <url>`） |
+| `scripts/close-chrome.mjs` | 用完自动关闭 Chrome（带保护：其他 Agent 在用 / 可见窗口时拒绝并提示；`--force` 强制）；代理另有空闲自动关兜底 |
