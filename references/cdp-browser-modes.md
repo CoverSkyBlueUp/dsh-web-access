@@ -90,3 +90,7 @@ ensureProxy（未运行则拉起 cdp-proxy.mjs）
   （代理 3456 / 调试 9222，沙箱放行回环），后续操作无需再授权**——这是"一次授权"的关键。
 - Chrome 二进制/配置位置可用 `config.env` 的 `CHROME_DIR` / `CHROME_PROFILE_DIR` 覆盖（默认 `<skill>/chrome`、`<skill>/chrome-profile`），
   便于放在工作区专用文件夹、与 skill 其它文件分离。
+- **DSH workspace-write 下，由 Agent 命令拉起的子进程（代理/浏览器）会在命令结束时被杀**（job 对象清树）：
+  代理与 Chrome 都必须用 **full access 一次性启动**（或依赖登录时计划任务）才能常驻；常驻后 skill 脚本只连 localhost 无需再授权。
+- **站点经验自动采集**：CDP 代理在 `/new` 首次访问新域名时自动生成 `references/site-patterns/<host>.md` 草稿
+  （标题/URL 模式/页面结构/登录痕迹，均实测事实），二次访问不覆盖；Agent 操作后补全「有效模式」「已知陷阱」。

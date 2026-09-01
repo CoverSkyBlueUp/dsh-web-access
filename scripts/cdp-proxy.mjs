@@ -4,12 +4,15 @@
 // Node.js 22+（使用原生 WebSocket）
 
 import http from 'node:http';
-import { URL } from 'node:url';
+import { URL, fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import net from 'node:net';
 import { selectBrowser, findFallbackPort } from './browser-discovery.mjs';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const PATTERNS_DIR = path.join(ROOT, 'references', 'site-patterns');
 
 // --- 解析命令行 --browser 参数（本次启动用哪个浏览器）---
 function parseBrowserArg() {
@@ -321,6 +324,61 @@ async function waitForLoad(
   });
 }
 
+// --- 自动采集站点经验：首次访问新域名时，生成基础 site-pattern 文件 ---
+// 在 /new 成功加载页面后调用（容错，不影响主流程）。仅处理 http(s) 且
+// references/site-patterns/<host>.md 不存在时写草稿；本地地址跳过。
+async function maybeSaveSitePattern(pageUrl, sid) {
+  let u;
+  try { u = new URL(pageUrl); } catch { return; }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return;
+  const host = u.hostname.replace(/^www\./, '');
+  if (host === 'localhost' || host === '127.0.0.1' || host === '::1') return;
+  const file = path.join(PATTERNS_DIR, `${host}.md`);
+  if (fs.existsSync(file)) return;
+
+  // 采集基础事实（中文关键词用 Unicode 转义；表达式中禁 continue/break；括号配对；三元表达式补全 else 分支）
+  const expr = `(()=>{const d=document;const t=(d.title||'').trim().slice(0,120);const links=d.querySelectorAll('a').length;const vids=d.querySelectorAll('a[href*="/video/"],a[href*="watch?v="],a[href*="/v/"]').length;const forms=d.querySelectorAll('form,input[type="text"],input[type="password"],textarea').length;const imgs=d.querySelectorAll('img').length;const loginN=((d.body?d.body.innerText:'').match(/\\u767b\\u5f55|\\u5bc6\\u7801|\\u626b\\u7801|login|sign\\s?in|password/gi)||[]).length;return JSON.stringify({title:t,links,vids,forms,imgs,loginN,ready:d.readyState});})()`;
+  let facts = null;
+  try {
+    const resp = await sendCDP('Runtime.evaluate', { expression: expr, returnByValue: true }, sid);
+    const v = resp.result?.result?.value;
+    if (typeof v === 'string') facts = JSON.parse(v);
+  } catch { return; }
+  if (!facts) return;
+
+  const date = new Date().toISOString().slice(0, 10);
+  const md = [
+    '---',
+    `domain: ${host}`,
+    'aliases: []',
+    `updated: ${date}`,
+    '---',
+    '',
+    '## 平台特征（自动采集 · 首次访问）',
+    `- 标题结构：\`${facts.title || '(空)'}\``,
+    `- URL 模式：\`${u.protocol}//${u.host}\``,
+    `- 页面结构：链接 ${facts.links} 个、视频链接 ${facts.vids} 个、表单/输入 ${facts.forms} 个、图片 ${facts.imgs} 个（readyState=${facts.ready}）`,
+    `- 登录痕迹：检出 ${facts.loginN} 处登录相关文本（仅提示，需人工确认）`,
+    '',
+    '## 有效模式',
+    '（待 Agent 操作后补全：已验证的 URL 模式、操作策略、选择器）',
+    '',
+    '## 已知陷阱',
+    '（待 Agent 操作后补全：什么会失败以及为什么）',
+    '',
+    `> 本文件由 CDP 代理在首次访问 ${host} 时自动生成，仅含基础事实；`,
+    '> 请只补全验证过的事实，勿写猜测。',
+    '',
+  ].join('\n');
+  try {
+    fs.mkdirSync(PATTERNS_DIR, { recursive: true });
+    fs.writeFileSync(file, md, 'utf8');
+    console.log(`[CDP Proxy] 已自动保存站点经验: ${host}.md`);
+  } catch (e) {
+    console.log(`[CDP Proxy] 站点经验写入失败 ${host}: ${e.message}`);
+  }
+}
+
 // --- 读取 POST body ---
 async function readBody(req) {
   let body = '';
@@ -381,11 +439,14 @@ const server = http.createServer(async (req, res) => {
       managedTabs.set(targetId, { lastAccessed: Date.now() });
 
       // 等待页面加载
+      let sid = null;
       if (targetUrl !== 'about:blank') {
         try {
-          const sid = await ensureSession(targetId);
+          sid = await ensureSession(targetId);
           await sendCDP('Page.navigate', { url: targetUrl }, sid);
           await waitForLoad(sid, 15000, { requireNonBlank: true, acceptInteractive: true });
+          // 自动采集站点经验（新域名首次访问时生成基础 site-pattern；失败不影响主流程）
+          await maybeSaveSitePattern(targetUrl, sid).catch(() => {});
         } catch { /* 非致命，继续 */ }
       }
 
